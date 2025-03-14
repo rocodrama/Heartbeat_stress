@@ -3,7 +3,9 @@
 
 ### cmake 다운
 (리눅스)
+
 `sudo apt update`
+
 `sudo apt install cmake`
 
 `pip install dlib`
