@@ -1,9 +1,12 @@
-## facial landmarks recognition 
-
-![My Face](https://i.imgur.com/7IIOka9.png)
-
 ### Dependencies 
-`pip install numpy opencv-python dlib imutils`
+`pip install numpy opencv-python imutils`
+
+### cmake 다운
+(리눅스)
+`sudo apt update`
+`sudo apt install cmake`
+
+`pip install dlib`
 
 ### Run
 `python main.py`
