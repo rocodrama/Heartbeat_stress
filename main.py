@@ -187,7 +187,7 @@ while True:
 
     else:
         cv2.putText(frame, "Measuring...", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
 
     # # 영상 출력
     # # cv2.imshow("Face, HR, HRV & Stress Measurement", frame)
