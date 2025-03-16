@@ -53,23 +53,25 @@ while True:
         for (x, y) in shape:
             cv2.circle(frame, (x, y), 2, (0, 255, 0), -1)
 
-        # ROI 설정: 이마 영역 선택
-        x_vals = shape[17:27, 0]
-        y_vals = shape[17:27, 1]
+        # ROI 설정: 얼굴 전체 사용
+        x_vals = shape[:, 0]  # 모든 x 좌표
+        y_vals = shape[:, 1]  # 모든 y 좌표
+
         x_min, x_max = np.min(x_vals), np.max(x_vals)
-        y_min = np.min(y_vals)
-        roi_top = max(y_min - 40, 0)
-        roi_bottom = max(y_min - 10, 0)
-        roi_left = x_min
-        roi_right = x_max
+        y_min, y_max = np.min(y_vals), np.max(y_vals)
+
+        roi_top = y_min   # 얼굴의 최상단
+        roi_bottom = y_max  # 얼굴의 최하단
+        roi_left = x_min   # 얼굴의 좌측
+        roi_right = x_max  # 얼굴의 우측
 
         # ROI 사각형 표시
-        cv2.rectangle(frame, (roi_left, roi_top), (roi_right, roi_bottom), (255, 0, 0), 2)
+        # cv2.rectangle(frame, (roi_left, roi_top), (roi_right, roi_bottom), (255, 0, 0), 2)
 
-        # ROI에서 녹색 채널 평균값 추출
+        # 얼굴 전체에서 녹색 채널 평균값 추출
         roi = frame[roi_top:roi_bottom, roi_left:roi_right]
         if roi.size != 0:
-            mean_green = cv2.mean(roi)[1]
+            mean_green = np.mean(roi[:, :, 1])  # 얼굴 전체의 녹색 채널 평균
             current_time = time.time() - start_time
             green_buffer.append(mean_green)
             time_buffer.append(current_time)
