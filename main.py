@@ -17,8 +17,14 @@ if not cap.isOpened():
     print("Error: Could not open webcam.")
     exit()
 
+# 실제 FPS 감지
+fps = cap.get(cv2.CAP_PROP_FPS)
+print(fps)
+if fps <= 0 or fps is None:  
+    fps = 30  # 기본값 설정 (웹캠이 FPS 정보를 제공하지 않는 경우)
+
 # 녹색 채널 신호와 타임스탬프를 저장할 버퍼 (약 10초 분량)
-buffer_length = 300  # 30 fps 기준으로 10초 데이터 저장
+buffer_length = int(fps * 10)  # FPS 기반으로 10초 데이터 저장
 green_buffer = deque(maxlen=buffer_length)
 time_buffer = deque(maxlen=buffer_length)
 
