@@ -1,106 +1,200 @@
-# import the necessary packages
-from imutils import face_utils
-import dlib
 import cv2
+import dlib
 import numpy as np
+from imutils import face_utils
+from collections import deque
+from scipy.signal import butter, filtfilt, find_peaks
 import time
-import math
 
-# initialize dlib's face detector (HOG-based) and then create
-# the facial landmark predictor
+# dlib 얼굴 감지 및 랜드마크 예측기 초기화
 p = "shape_predictor_68_face_landmarks.dat"
 detector = dlib.get_frontal_face_detector()
 predictor = dlib.shape_predictor(p)
 
+# 웹캠 캡처 초기화
 cap = cv2.VideoCapture(0)
+if not cap.isOpened():
+    print("Error: Could not open webcam.")
+    exit()
 
-# 심박수를 계산하는 함수 (얼굴의 색상 변화를 기반으로)
-def estimate_heart_rate(roi):
-    # ROI에서 평균 색상 계산 (대체 방법)
-    avg_color = np.mean(roi, axis=(0, 1))
-    heart_rate = avg_color[1] * 0.1  # 임시 방식 (보정이 필요)
-    return heart_rate
+# 녹색 채널 신호와 타임스탬프를 저장할 버퍼 (약 10초 분량)
+buffer_length = 300  # 30 fps 기준으로 10초 데이터 저장
+green_buffer = deque(maxlen=buffer_length)
+time_buffer = deque(maxlen=buffer_length)
 
-# HRV 계산 함수
-def calculate_hrv(rr_intervals):
-    rr_intervals = np.array(rr_intervals)
-    rr_intervals = rr_intervals[~np.isnan(rr_intervals)]  # NaN 값 제거
-    if len(rr_intervals) > 1:
-        sdnn = np.std(rr_intervals)
-        rmssd = np.sqrt(np.mean(np.diff(rr_intervals) ** 2))
-        return sdnn, rmssd
-    return None, None
+# 밴드패스 필터 적용 함수
+def bandpass_filter(data, lowcut=0.75, highcut=4, fs=30, order=5):
+    nyq = 0.5 * fs
+    low = lowcut / nyq
+    high = highcut / nyq
+    b, a = butter(order, [low, high], btype='band')
+    return filtfilt(b, a, data)
 
-# 얼굴을 추적하고 심박수를 계산하는 메인 루프
-rr_intervals = []  # 심박수 간격 리스트
-prev_heart_rate = None
 start_time = time.time()
 
-# 초기 sdnn, rmssd 값 정의 (없을 경우 에러 방지)
-sdnn, rmssd = None, None
-
-# 창 크기 한 번만 설정
-cv2.namedWindow("Output", cv2.WINDOW_NORMAL)  # 창 크기 조정 가능하도록 설정
-cv2.resizeWindow("Output", 1920, 1080)  # 창 크기 설정
+# 창 크기 조정 가능하도록 설정
+cv2.namedWindow("Face, HR, HRV & Stress Measurement", cv2.WINDOW_NORMAL) 
 
 while True:
-    # load the input image and convert it to grayscale
-    _, image = cap.read()
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # detect faces in the grayscale image
+    ret, frame = cap.read()
+    if not ret:
+        print("Error: Failed to capture frame.")
+        break
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     rects = detector(gray, 0)
-    
-    # loop over the face detections
-    for (i, rect) in enumerate(rects):
-        # determine the facial landmarks for the face region, then
-        # convert the facial landmark (x, y)-coordinates to a NumPy
-        # array
+
+    if len(rects) > 0:
+        rect = rects[0]  # 첫 번째 얼굴 사용
         shape = predictor(gray, rect)
         shape = face_utils.shape_to_np(shape)
 
-        # 얼굴 ROI (Region of Interest) 정의
-        x, y, w, h = (rect.left(), rect.top(), rect.width(), rect.height())
-        roi = image[y:y+h, x:x+w]
-        
-        # 심박수 추정
-        heart_rate = estimate_heart_rate(roi)
-
-        if prev_heart_rate is not None:
-            # 심박수 간격 계산 (시간 차이 기반)
-            rr_intervals.append(time.time() - start_time)
-
-        prev_heart_rate = heart_rate
-        start_time = time.time()
-
-        # 얼굴 랜드마크를 이미지에 그리기
+        # 얼굴 랜드마크 표시
         for (x, y) in shape:
-            cv2.circle(image, (x, y), 2, (0, 255, 0), -1)
-    
-    # HRV 계산
-    if len(rr_intervals) > 1:
-        sdnn, rmssd = calculate_hrv(rr_intervals)
-        if sdnn is not None and rmssd is not None:
-            cv2.putText(image, f"HRV (SDNN): {sdnn:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.putText(image, f"HRV (RMSSD): {rmssd:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.circle(frame, (x, y), 2, (0, 255, 0), -1)
 
-    # 스트레스 지수 추정 (HRV가 낮을수록 스트레스가 높음)
-    if sdnn is not None and rmssd is not None:
-        stress_index = (sdnn + rmssd) / 2
-        cv2.putText(image, f"Stress Index: {stress_index:.2f}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        # ROI 설정: 이마 영역 선택
+        x_vals = shape[17:27, 0]
+        y_vals = shape[17:27, 1]
+        x_min, x_max = np.min(x_vals), np.max(x_vals)
+        y_min = np.min(y_vals)
+        roi_top = max(y_min - 40, 0)
+        roi_bottom = max(y_min - 10, 0)
+        roi_left = x_min
+        roi_right = x_max
 
-    # # show the output image with the face detections + facial landmarks
-    # cv2.imshow("Output", image)
+        # ROI 사각형 표시
+        cv2.rectangle(frame, (roi_left, roi_top), (roi_right, roi_bottom), (255, 0, 0), 2)
 
-   # 비디오 프레임 크기 조정 (이미지를 창 크기에 맞게 크기 변경)
-    image_resized = cv2.resize(image, (1920, 1080))  # 원하는 크기로 변경
+        # ROI에서 녹색 채널 평균값 추출
+        roi = frame[roi_top:roi_bottom, roi_left:roi_right]
+        if roi.size != 0:
+            mean_green = cv2.mean(roi)[1]
+            current_time = time.time() - start_time
+            green_buffer.append(mean_green)
+            time_buffer.append(current_time)
 
-    # 출력 이미지 크기 조정된 것을 보여줍니다.
-    cv2.imshow("Output", image_resized)
+    # 데이터가 충분히 쌓였을 때 심박수, HRV, 스트레스 지수 계산
+    if len(green_buffer) == buffer_length:
+        green_signal = np.array(green_buffer)
+        t_signal = np.array(time_buffer)
 
-    k = cv2.waitKey(5) & 0xFF
-    if k == 27:
+        # 실제 FPS 가져오기
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        # print(fps)
+        if fps == 0 or fps is None:
+            fps = 30  # 기본값 설정
+
+        # 필터 적용
+        filtered_signal = bandpass_filter(green_signal, fs=fps)
+
+        # 피크 검출
+        # 피크 감지
+        expected_hr = 60  # 예상 평균 심박수
+        expected_peak_distance = int(fps * 60 / expected_hr)  # 프레임 속도에 맞춰 조정
+
+        # distance 값을 적절히 조정 (ex. 심박수가 40~120 BPM 사이에 맞게)
+        peaks, _ = find_peaks(filtered_signal, distance=int(fps * 60 / 120), height=np.mean(filtered_signal) * 0.5)
+
+        if len(peaks) > 1:
+            # 심박수 계산
+            duration = t_signal[-1] - t_signal[0]
+            bpm = len(peaks) / duration * 60
+
+            # NN 간격 계산
+            nn_intervals = np.diff(t_signal[peaks])
+
+            ###### 추가1 #####
+
+            # IQR (Interquartile Range) 방법을 이용해 이상값 제거
+            Q1 = np.percentile(nn_intervals, 25)
+            Q3 = np.percentile(nn_intervals, 75)
+            IQR = Q3 - Q1
+
+            # 정상 범위 설정 (1.5 * IQR 범위 내)
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
+
+            # 이상값 제거
+            filtered_nn_intervals = nn_intervals[(nn_intervals >= lower_bound) & (nn_intervals <= upper_bound)]
+
+            # 이상값 제거 후 NN 간격이 남아있을 때만 계산
+            if len(filtered_nn_intervals) > 1:    
+            #### 추가1 #####
+
+                # SDNN 계산
+                sdnn = np.std(nn_intervals)
+                rmssd = np.sqrt(np.mean(np.square(np.diff(nn_intervals)))) if len(nn_intervals) > 1 else 0
+
+                # 스트레스 지수 계산
+                bin_width = 0.05
+                bins = np.arange(0, np.max(nn_intervals) + bin_width, bin_width)
+                counts, bin_edges = np.histogram(nn_intervals, bins=bins)
+                max_bin_index = np.argmax(counts)
+                AMo = (counts[max_bin_index] / len(nn_intervals)) * 100
+                Mo = (bin_edges[max_bin_index] + bin_edges[max_bin_index + 1]) / 2
+                MxDM = np.max(nn_intervals) - np.min(nn_intervals)
+                # stress_index = AMo / (2 * Mo * MxDM) if Mo * MxDM != 0 else 0
+
+                # 스트레스 지수 계산 시 보정값
+                epsilon = 1e-6  # 너무 작은 값 방지
+                # Mo가 너무 작으면 NN 간격 중앙값으로 대체
+                Mo = Mo if Mo > 0 else np.median(nn_intervals)
+                # MxDM 최소값 설정
+                MxDM = np.max(nn_intervals) - np.min(nn_intervals)
+                MxDM = MxDM if MxDM > 0.05 else 0.05  # 최소 50ms
+                
+                stress_index = AMo / (2 * Mo * max(MxDM, epsilon))
+
+                # 스트레스 위험도 판별
+                if stress_index <= 50:
+                    stress_level = "Low"
+                    stress_color = (0, 255, 0)  # 초록색
+                elif stress_index <= 150:
+                    stress_level = "Normal"
+                    stress_color = (0, 255, 255)  # 노란색
+                elif stress_index <= 300:
+                    stress_level = "High"
+                    stress_color = (0, 165, 255)  # 주황색
+                else:
+                    stress_level = "Very High"
+                    stress_color = (0, 0, 255)  # 빨간색
+
+                # 결과 출력
+                cv2.putText(frame, f"HR: {bpm:.1f} BPM", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                cv2.putText(frame, f"SDNN: {sdnn:.3f} s", (10, 60),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                cv2.putText(frame, f"RMSSD: {rmssd:.3f} s", (10, 90),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                cv2.putText(frame, f"Stress Index: {stress_index:.3f}", (10, 120),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, stress_color, 2)
+                cv2.putText(frame, f"Stress Level: {stress_level}", (10, 150),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, stress_color, 2)
+
+                # print(f"NN intervals (in seconds): {nn_intervals}")
+                # print(f"Mo (Most frequent NN interval): {Mo}")
+                # print(f"MxDM (Max NN - Min NN): {MxDM}")
+                # print(f"AMo (Amplitude of Mode): {AMo}")
+
+    else:
+        cv2.putText(frame, "Measuring...", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
+
+    # # 영상 출력
+    # # cv2.imshow("Face, HR, HRV & Stress Measurement", frame)
+
+    # 화면 크기에 맞춰 비율 유지하면서 조정
+    height, width = frame.shape[:2]
+    window_height, window_width = 1080, 1920  # 원하는 윈도우 크기
+    scale = min(window_width / width, window_height / height)
+    resized_frame = cv2.resize(frame, (int(width * scale), int(height * scale)))
+
+
+    cv2.imshow("Face, HR, HRV & Stress Measurement", resized_frame)
+
+    if cv2.waitKey(1) & 0xFF == 27:  # ESC 키로 종료
         break
 
-cv2.destroyAllWindows()
 cap.release()
+cv2.destroyAllWindows()
