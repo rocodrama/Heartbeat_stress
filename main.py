@@ -59,29 +59,27 @@ while True:
         for (x, y) in shape:
             cv2.circle(frame, (x, y), 2, (0, 255, 0), -1)
 
-        # ROI 설정: 얼굴 전체 사용
-        x_vals = shape[:, 0]  # 모든 x 좌표
-        y_vals = shape[:, 1]  # 모든 y 좌표
+        # 얼굴 윤곽선을 Convex Hull로 생성
+        hull = cv2.convexHull(shape)
 
-        x_min, x_max = np.min(x_vals), np.max(x_vals)
-        y_min, y_max = np.min(y_vals), np.max(y_vals)
+        # 마스크 생성 (배경 제거)
+        mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+        cv2.fillConvexPoly(mask, hull, 255)
 
-        roi_top = y_min   # 얼굴의 최상단
-        roi_bottom = y_max  # 얼굴의 최하단
-        roi_left = x_min   # 얼굴의 좌측
-        roi_right = x_max  # 얼굴의 우측
+        # 녹색 채널에서 얼굴 내부 영역만 추출
+        green_channel = frame[:, :, 1]  # 녹색 채널
+        face_green = cv2.bitwise_and(green_channel, green_channel, mask=mask)
 
-        # ROI 사각형 표시
-        # cv2.rectangle(frame, (roi_left, roi_top), (roi_right, roi_bottom), (255, 0, 0), 2)
+        # 평균 녹색 신호 계산 (배경 제외)
+        mean_green = np.mean(face_green[mask == 255])
+        current_time = time.time() - start_time
+        green_buffer.append(mean_green)
+        time_buffer.append(current_time)
 
-        # 얼굴 전체에서 녹색 채널 평균값 추출
-        roi = frame[roi_top:roi_bottom, roi_left:roi_right]
-        if roi.size != 0:
-            mean_green = np.mean(roi[:, :, 1])  # 얼굴 전체의 녹색 채널 평균
-            current_time = time.time() - start_time
-            green_buffer.append(mean_green)
-            time_buffer.append(current_time)
+        # 얼굴 윤곽선 표시
+        cv2.polylines(frame, [hull], isClosed=True, color=(255, 0, 0), thickness=2)
 
+    
     # 데이터가 충분히 쌓였을 때 심박수, HRV, 스트레스 지수 계산
     if len(green_buffer) == buffer_length:
         green_signal = np.array(green_buffer)
@@ -112,8 +110,6 @@ while True:
             # NN 간격 계산
             nn_intervals = np.diff(t_signal[peaks])
 
-            ###### 추가1 #####
-
             # IQR (Interquartile Range) 방법을 이용해 이상값 제거
             Q1 = np.percentile(nn_intervals, 25)
             Q3 = np.percentile(nn_intervals, 75)
@@ -128,7 +124,6 @@ while True:
 
             # 이상값 제거 후 NN 간격이 남아있을 때만 계산
             if len(filtered_nn_intervals) > 1:    
-            #### 추가1 #####
 
                 # SDNN 계산
                 sdnn = np.std(nn_intervals)
